@@ -55,7 +55,14 @@ function buildSignatureHeaders(method, fullPath, jwe, privateKeyB64) {
 
   const privKeyDer = Buffer.from(keyClean, 'base64')
   const privKey = crypto.createPrivateKey({ key: privKeyDer, format: 'der', type: 'pkcs8' })
-  const sigBytes = crypto.sign(null, Buffer.from(sigBase, 'utf8'), privKey)
+  const isRSA = privKeyDer[8] === 0x30 // RSA PKCS8 OID sequence
+  const sigBytes = isRSA
+    ? crypto.sign('sha256', Buffer.from(sigBase, 'utf8'), {
+        key: privKey,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+      })
+    : crypto.sign(null, Buffer.from(sigBase, 'utf8'), privKey)
 
   return {
     'x-ebay-enforce-signature': 'true',
