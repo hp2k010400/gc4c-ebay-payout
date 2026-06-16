@@ -141,7 +141,7 @@ body {
 .brow-total:hover { background: #eef9f2; }
 .brow-label { font-size: 14px; color: #333; font-weight: 500; }
 .brow-total .brow-label { font-weight: 700; color: #111; }
-.brow-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
+.brow-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; min-width: 120px; text-align: right; flex-shrink: 0; }
 
 /* --- Spinner --- */
 .spinner {

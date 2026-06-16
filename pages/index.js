@@ -117,11 +117,11 @@ export default function PayoutDashboard() {
         </div>
         <div className="summary-card">
           <div className="summary-card-label">Refunds</div>
-          <div className="summary-card-value val-neg">{data ? fmt(data.refunds) : '—'}</div>
+          <div className="summary-card-value val-neg">{data ? fmt(Math.abs(data.refunds)) : '—'}</div>
         </div>
         <div className="summary-card">
           <div className="summary-card-label">Charges</div>
-          <div className="summary-card-value val-neg">{data ? fmt(data.charges) : '—'}</div>
+          <div className="summary-card-value val-neg">{data ? fmt(Math.abs(data.charges)) : '—'}</div>
         </div>
         <div className="summary-card summary-card-featured">
           <div className="summary-card-label">Total Payout</div>
