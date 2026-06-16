@@ -34,12 +34,18 @@ async function getAccessToken() {
   return cachedToken
 }
 
-function buildSignatureHeaders(method, path, jwe, privateKeyB64) {
+function buildSignatureHeaders(method, fullPath, jwe, privateKeyB64) {
   const created = Math.floor(Date.now() / 1000)
-  const coveredComponents = '"@method" "@path" "@authority"'
+
+  // Split path and query for separate components
+  const [path, query] = fullPath.split('?')
+  const queryStr = query ? `?${query}` : ''
+
+  const coveredComponents = '"x-ebay-enforce-signature" "@method" "@path" "@authority"'
   const sigParams = `(${coveredComponents});created=${created};keyid="${jwe}"`
 
   const sigBase = [
+    `"x-ebay-enforce-signature": true`,
     `"@method": ${method}`,
     `"@path": ${path}`,
     `"@authority": ${FINANCES_HOST}`,
@@ -51,6 +57,7 @@ function buildSignatureHeaders(method, path, jwe, privateKeyB64) {
   const sigBytes = crypto.sign(null, Buffer.from(sigBase), privKey)
 
   return {
+    'x-ebay-enforce-signature': 'true',
     'x-ebay-signature-key': jwe,
     'Signature-Input': `sig1=${sigParams}`,
     'Signature': `sig1=:${sigBytes.toString('base64')}:`,
