@@ -174,6 +174,15 @@ export default async function handler(req, res) {
 
   try {
     const token = await getAccessToken()
+
+    if (req.query.debug === '1') {
+      const jwe = process.env.EBAY_JWE.trim()
+      const pk = process.env.EBAY_SIGNING_PRIVATE_KEY.trim()
+      const testPath = '/sell/finances/v1/transaction'
+      const headers = buildSignatureHeaders('GET', testPath, jwe, pk)
+      return res.json({ debug: true, headers, jweLength: jwe.length, pkLength: pk.length })
+    }
+
     const transactions = await fetchTransactions(token, date)
     const summary = aggregate(transactions)
     res.json({ date, transactionCount: transactions.length, ...summary })
