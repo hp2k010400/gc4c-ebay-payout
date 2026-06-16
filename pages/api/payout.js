@@ -117,13 +117,17 @@ function aggregate(transactions) {
 export default async function handler(req, res) {
   const date = req.query.date || new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
+  if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_REFRESH_TOKEN) {
+    return res.status(500).json({ error: 'Missing env vars — EBAY_CLIENT_ID or EBAY_REFRESH_TOKEN not set' })
+  }
+
   try {
     const token = await getAccessToken()
     const transactions = await fetchTransactions(token, date)
     const summary = aggregate(transactions)
-    res.json({ date, ...summary })
+    res.json({ date, transactionCount: transactions.length, ...summary })
   } catch (err) {
-    console.error(err)
-    res.status(500).json({ error: err.message })
+    console.error('Payout API error:', err)
+    res.status(500).json({ error: err.message, stack: err.stack })
   }
 }
