@@ -1,8 +1,8 @@
 import crypto from 'crypto'
 
 const TOKEN_ENDPOINT = 'https://api.ebay.com/identity/v1/oauth2/token'
-const FINANCES_ENDPOINT = 'https://apiz.ebay.com/sell/finances/v1/transaction'
 const FINANCES_HOST = 'apiz.ebay.com'
+const FINANCES_PATH = '/sell/finances/v1/transaction'
 
 let cachedToken = null
 let tokenExpiry = 0
@@ -34,59 +34,42 @@ async function getAccessToken() {
   return cachedToken
 }
 
-function buildSignatureHeaders(method, fullPath, jwe, privateKeyB64) {
-  const jweClean = jwe.trim()
-  const keyClean = privateKeyB64.trim()
+function buildSignatureHeaders(jwe, privateKeyB64) {
   const created = Math.floor(Date.now() / 1000)
-  const path = fullPath.split('?')[0]
-
-  const sigParams = `("x-ebay-enforce-signature" "@method" "@path" "@authority");created=${created};keyid="${jweClean}"`
+  const sigParamsValue = `("x-ebay-signature-key" "@method" "@path" "@authority");created=${created}`
 
   const sigBase = [
-    `"x-ebay-enforce-signature": true`,
-    `"@method": ${method}`,
-    `"@path": ${path}`,
+    `"x-ebay-signature-key": ${jwe}`,
+    `"@method": GET`,
+    `"@path": ${FINANCES_PATH}`,
     `"@authority": ${FINANCES_HOST}`,
-    `"@signature-params": ${sigParams}`,
+    `"@signature-params": ${sigParamsValue}`,
   ].join('\n')
 
-  console.log('Signature base:', sigBase)
-  console.log('created:', created)
-
-  const privKeyDer = Buffer.from(keyClean, 'base64')
-  const privKey = crypto.createPrivateKey({ key: privKeyDer, format: 'der', type: 'pkcs8' })
-  const isRSA = privKeyDer[8] === 0x30 // RSA PKCS8 OID sequence
-  const sigBytes = isRSA
-    ? crypto.sign('sha256', Buffer.from(sigBase, 'utf8'), {
-        key: privKey,
-        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
-      })
-    : crypto.sign(null, Buffer.from(sigBase, 'utf8'), privKey)
+  const pemKey = `-----BEGIN PRIVATE KEY-----\n${privateKeyB64.trim()}\n-----END PRIVATE KEY-----`
+  const sigBytes = crypto.sign(undefined, Buffer.from(sigBase, 'utf8'), pemKey)
 
   return {
-    'x-ebay-enforce-signature': 'true',
-    'x-ebay-signature-key': jweClean,
-    'Signature-Input': `sig1=${sigParams}`,
+    'x-ebay-signature-key': jwe,
+    'Signature-Input': `sig1=${sigParamsValue}`,
     'Signature': `sig1=:${sigBytes.toString('base64')}:`,
   }
 }
 
 async function fetchTransactions(accessToken, date) {
-  const jwe = process.env.EBAY_JWE
-  const privateKey = process.env.EBAY_SIGNING_PRIVATE_KEY
-
+  const jwe = process.env.EBAY_JWE.trim()
+  const privateKey = process.env.EBAY_SIGNING_PRIVATE_KEY.trim()
   const filter = `transactionDate:[${date}T00:00:00.000Z..${date}T23:59:59.999Z]`
+
   let transactions = []
-  let nextPath = `/sell/finances/v1/transaction?filter=${encodeURIComponent(filter)}&limit=200`
+  let nextPath = `${FINANCES_PATH}?filter=${encodeURIComponent(filter)}&limit=200`
 
   while (nextPath) {
-    const sigHeaders = buildSignatureHeaders('GET', nextPath, jwe, privateKey)
+    const sigHeaders = buildSignatureHeaders(jwe, privateKey)
 
     const res = await fetch(`https://${FINANCES_HOST}${nextPath}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'Content-Language': 'en-GB',
         ...sigHeaders,
       },
     })
@@ -181,15 +164,6 @@ export default async function handler(req, res) {
 
   try {
     const token = await getAccessToken()
-
-    if (req.query.debug === '1') {
-      const jwe = process.env.EBAY_JWE.trim()
-      const pk = process.env.EBAY_SIGNING_PRIVATE_KEY.trim()
-      const testPath = '/sell/finances/v1/transaction'
-      const headers = buildSignatureHeaders('GET', testPath, jwe, pk)
-      return res.json({ debug: true, headers, jweLength: jwe.length, pkLength: pk.length })
-    }
-
     const transactions = await fetchTransactions(token, date)
     const summary = aggregate(transactions)
     res.json({ date, transactionCount: transactions.length, ...summary })
