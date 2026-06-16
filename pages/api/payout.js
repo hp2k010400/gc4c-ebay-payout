@@ -35,14 +35,12 @@ async function getAccessToken() {
 }
 
 function buildSignatureHeaders(method, fullPath, jwe, privateKeyB64) {
+  const jweClean = jwe.trim()
+  const keyClean = privateKeyB64.trim()
   const created = Math.floor(Date.now() / 1000)
+  const path = fullPath.split('?')[0]
 
-  // Split path and query for separate components
-  const [path, query] = fullPath.split('?')
-  const queryStr = query ? `?${query}` : ''
-
-  const coveredComponents = '"x-ebay-enforce-signature" "@method" "@path" "@authority"'
-  const sigParams = `(${coveredComponents});created=${created};keyid="${jwe}"`
+  const sigParams = `("x-ebay-enforce-signature" "@method" "@path" "@authority");created=${created};keyid="${jweClean}"`
 
   const sigBase = [
     `"x-ebay-enforce-signature": true`,
@@ -52,13 +50,16 @@ function buildSignatureHeaders(method, fullPath, jwe, privateKeyB64) {
     `"@signature-params": ${sigParams}`,
   ].join('\n')
 
-  const privKeyDer = Buffer.from(privateKeyB64, 'base64')
+  console.log('Signature base:', sigBase)
+  console.log('created:', created)
+
+  const privKeyDer = Buffer.from(keyClean, 'base64')
   const privKey = crypto.createPrivateKey({ key: privKeyDer, format: 'der', type: 'pkcs8' })
-  const sigBytes = crypto.sign(null, Buffer.from(sigBase), privKey)
+  const sigBytes = crypto.sign(null, Buffer.from(sigBase, 'utf8'), privKey)
 
   return {
     'x-ebay-enforce-signature': 'true',
-    'x-ebay-signature-key': jwe,
+    'x-ebay-signature-key': jweClean,
     'Signature-Input': `sig1=${sigParams}`,
     'Signature': `sig1=:${sigBytes.toString('base64')}:`,
   }
