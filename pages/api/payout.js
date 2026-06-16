@@ -1,5 +1,8 @@
+import crypto from 'crypto'
+
 const TOKEN_ENDPOINT = 'https://api.ebay.com/identity/v1/oauth2/token'
 const FINANCES_ENDPOINT = 'https://apiz.ebay.com/sell/finances/v1/transaction'
+const FINANCES_HOST = 'apiz.ebay.com'
 
 let cachedToken = null
 let tokenExpiry = 0
@@ -20,7 +23,10 @@ async function getAccessToken() {
     body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(process.env.EBAY_REFRESH_TOKEN)}`,
   })
 
-  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`)
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Token refresh failed: ${res.status} — ${body}`)
+  }
 
   const data = await res.json()
   cachedToken = data.access_token
@@ -28,29 +34,62 @@ async function getAccessToken() {
   return cachedToken
 }
 
+function buildSignatureHeaders(method, path, jwe, privateKeyB64) {
+  const created = Math.floor(Date.now() / 1000)
+  const coveredComponents = '"@method" "@path" "@authority"'
+  const sigParams = `(${coveredComponents});created=${created};keyid="${jwe}"`
+
+  const sigBase = [
+    `"@method": ${method}`,
+    `"@path": ${path}`,
+    `"@authority": ${FINANCES_HOST}`,
+    `"@signature-params": ${sigParams}`,
+  ].join('\n')
+
+  const privKeyDer = Buffer.from(privateKeyB64, 'base64')
+  const privKey = crypto.createPrivateKey({ key: privKeyDer, format: 'der', type: 'pkcs8' })
+  const sigBytes = crypto.sign(null, Buffer.from(sigBase), privKey)
+
+  return {
+    'x-ebay-signature-key': jwe,
+    'Signature-Input': `sig1=${sigParams}`,
+    'Signature': `sig1=:${sigBytes.toString('base64')}:`,
+  }
+}
+
 async function fetchTransactions(accessToken, date) {
-  const start = `${date}T00:00:00.000Z`
-  const end = `${date}T23:59:59.999Z`
+  const jwe = process.env.EBAY_JWE
+  const privateKey = process.env.EBAY_SIGNING_PRIVATE_KEY
 
-  const params = new URLSearchParams({
-    filter: `transactionDate:[${start}..${end}]`,
-    limit: '200',
-  })
-
+  const filter = `transactionDate:[${date}T00:00:00.000Z..${date}T23:59:59.999Z]`
   let transactions = []
-  let href = `${FINANCES_ENDPOINT}?${params}`
+  let nextPath = `/sell/finances/v1/transaction?filter=${encodeURIComponent(filter)}&limit=200`
 
-  while (href) {
-    const res = await fetch(href, {
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Language': 'en-GB' },
+  while (nextPath) {
+    const sigHeaders = buildSignatureHeaders('GET', nextPath, jwe, privateKey)
+
+    const res = await fetch(`https://${FINANCES_HOST}${nextPath}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Language': 'en-GB',
+        ...sigHeaders,
+      },
     })
+
     if (!res.ok) {
       const body = await res.text()
       throw new Error(`eBay API error: ${res.status} — ${body}`)
     }
+
     const data = await res.json()
     transactions = transactions.concat(data.transactions || [])
-    href = data.next || null
+
+    if (data.next) {
+      const url = new URL(data.next)
+      nextPath = url.pathname + url.search
+    } else {
+      nextPath = null
+    }
   }
 
   return transactions
@@ -70,10 +109,10 @@ function aggregate(transactions) {
     if (type === 'SALE') {
       sales += gross
       pp += parseFloat(tx.shippingCharge?.value || 0)
-      collectTax += parseFloat(tx.marketplaceFee?.find(f => f.feeType === 'COLLECTOR_TAX')?.amount?.value || 0)
       for (const fee of tx.marketplaceFee || []) {
         const amt = parseFloat(fee.amount?.value || 0)
-        if (fee.feeType === 'FINAL_VALUE_FEE_FIXED_PER_ORDER') fvfFix += amt
+        if (fee.feeType === 'COLLECTOR_TAX') collectTax += amt
+        else if (fee.feeType === 'FINAL_VALUE_FEE_FIXED_PER_ORDER') fvfFix += amt
         else if (fee.feeType === 'FINAL_VALUE_FEE_VARIABLE_PER_ORDER') fvfVar += amt
         else if (fee.feeType === 'VERY_HIGH_ITEM_NOT_AS_DESCRIBED') vhiFee += amt
         else if (fee.feeType === 'BELOW_STANDARD_PERFORMANCE_FEE') bspFee += amt
@@ -97,8 +136,7 @@ function aggregate(transactions) {
   }
 
   const charges = fvfFix + fvfVar + vhiFee + bspFee + intFee
-  const subtotal = sales + refunds + charges + postage + hold + claim + adjustment + other + charge
-  const totalPayout = parseFloat(subtotal.toFixed(2))
+  const total_payout = parseFloat((sales + refunds + charges + postage + hold + claim + adjustment + other + charge).toFixed(2))
 
   return {
     sales: parseFloat(sales.toFixed(2)),
@@ -110,7 +148,7 @@ function aggregate(transactions) {
     adjustment: parseFloat(adjustment.toFixed(2)),
     other: parseFloat(other.toFixed(2)),
     charge: parseFloat(charge.toFixed(2)),
-    total_payout: totalPayout,
+    total_payout,
     difference: 0,
     collectors_tax: parseFloat(collectTax.toFixed(2)),
     postage_and_packaging: parseFloat(pp.toFixed(2)),
@@ -120,8 +158,10 @@ function aggregate(transactions) {
 export default async function handler(req, res) {
   const date = req.query.date || new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
-  if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_REFRESH_TOKEN) {
-    return res.status(500).json({ error: 'Missing env vars — EBAY_CLIENT_ID or EBAY_REFRESH_TOKEN not set' })
+  const missing = ['EBAY_CLIENT_ID', 'EBAY_REFRESH_TOKEN', 'EBAY_JWE', 'EBAY_SIGNING_PRIVATE_KEY']
+    .filter(k => !process.env[k])
+  if (missing.length) {
+    return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` })
   }
 
   try {
@@ -131,6 +171,6 @@ export default async function handler(req, res) {
     res.json({ date, transactionCount: transactions.length, ...summary })
   } catch (err) {
     console.error('Payout API error:', err)
-    res.status(500).json({ error: err.message, stack: err.stack })
+    res.status(500).json({ error: err.message })
   }
 }
