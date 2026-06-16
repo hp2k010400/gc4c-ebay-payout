@@ -7,10 +7,8 @@ function fmt(n) {
   return n < 0 ? `-£${s}` : `£${s}`
 }
 
-function getYesterday() {
-  const d = new Date()
-  d.setDate(d.getDate() - 1)
-  return d.toISOString().split('T')[0]
+function getToday() {
+  return new Date().toISOString().split('T')[0]
 }
 
 function formatDateLabel(dateStr) {
@@ -37,7 +35,7 @@ const ROWS = [
 ]
 
 export default function PayoutDashboard() {
-  const [date, setDate]     = useState(getYesterday())
+  const [date, setDate]     = useState(getToday())
   const [data, setData]     = useState(null)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -46,7 +44,7 @@ export default function PayoutDashboard() {
     setLoading(true)
     fetch(`/api/payout?date=${date}`)
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
+      .then(d => { setData(d.noPayout ? null : d); setLoading(false) })
       .catch(() => setLoading(false))
   }, [date])
 
@@ -68,7 +66,7 @@ export default function PayoutDashboard() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getToday()
 
   function valueClass(n) {
     if (!n || n === 0) return 'val-zero'
@@ -87,7 +85,7 @@ export default function PayoutDashboard() {
         </button>
         <div className="date-label">
           <span className="date-label-main">{formatDateLabel(date)}</span>
-          <span className="date-label-sub">Transaction date</span>
+          <span className="date-label-sub">Payout date</span>
         </div>
         <button
           className="date-nav"
@@ -106,7 +104,7 @@ export default function PayoutDashboard() {
           onChange={e => e.target.value && setDate(e.target.value)}
           className="date-picker"
         />
-        <button className="btn btn-secondary" onClick={() => setDate(getYesterday())}>Yesterday</button>
+        <button className="btn btn-secondary" onClick={() => setDate(getToday())}>Today</button>
       </div>
 
       {/* Summary cards */}
