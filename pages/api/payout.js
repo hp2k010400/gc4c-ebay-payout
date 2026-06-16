@@ -44,7 +44,10 @@ async function fetchTransactions(accessToken, date) {
     const res = await fetch(href, {
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Language': 'en-GB' },
     })
-    if (!res.ok) throw new Error(`eBay API error: ${res.status}`)
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`eBay API error: ${res.status} — ${body}`)
+    }
     const data = await res.json()
     transactions = transactions.concat(data.transactions || [])
     href = data.next || null
