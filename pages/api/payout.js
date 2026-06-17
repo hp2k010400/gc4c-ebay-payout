@@ -94,6 +94,10 @@ async function fetchTransactionsByPayoutId(accessToken, payoutId) {
   return transactions
 }
 
+function hasRef(tx, type) {
+  return (tx.references || []).some(r => r.referenceType === type)
+}
+
 function aggregate(transactions, payoutAmount) {
   let sales = 0, refunds = 0, charges = 0, postage = 0, hold = 0, claim = 0
   let adjustment = 0, other = 0, charge = 0, collectors_tax = 0
@@ -103,6 +107,7 @@ function aggregate(transactions, payoutAmount) {
     const gross = parseFloat(tx.totalFeeBasisAmount?.value || tx.amount?.value || 0)
     const fees = parseFloat(tx.totalFeeAmount?.value || 0)
     const isDebit = tx.bookingEntry === 'DEBIT'
+    const isCredit = tx.bookingEntry === 'CREDIT'
 
     switch (tx.transactionType) {
       case 'SALE':
@@ -111,20 +116,32 @@ function aggregate(transactions, payoutAmount) {
         collectors_tax += parseFloat(tx.ebayCollectedTaxAmount?.value || 0)
         break
       case 'REFUND':
-        refunds -= gross
-        charges += fees
+        if (hasRef(tx, 'CASE_ID')) {
+          // Dispute resolved in buyer's favour — CSV "claim" type
+          claim -= net
+        } else {
+          // Genuine return/cancellation — CSV "refund" type
+          refunds -= gross
+          charges += fees  // fee credit returned
+        }
         break
       case 'SHIPPING_LABEL':
         postage -= net
         break
       case 'DISPUTE':
-        claim -= net
+        // Payment dispute hold — nets with CREDIT into Hold
+        hold -= net
         break
       case 'CREDIT':
-        claim += net
+        // Dispute resolved in seller's favour — hold released
+        hold += net
         break
       case 'NON_SALE_CHARGE':
-        charge -= net
+        if (isCredit) {
+          other += net  // fee credit — CSV "other fee" type
+        } else {
+          charge -= net  // fee charge — CSV "charge" type
+        }
         break
       case 'HOLD':
         hold += isDebit ? -net : net
